@@ -11,7 +11,7 @@ h2_sidebar()
 
 # Gemeinsame Sprachwahl aus language.py (Standard DE; auf Startseite änderbar).
 # Die gleiche Bilddatei wird für beide Sprachen verwendet.
-BILD = Path("img/h2_versuchskoffer_nummeriert.png")
+BILD = Path("img/h2.png")
 
 st.title(lang("Aufbau des Wasserstoff-Versuchskoffers", "Setting up the Hydrogen Experiment Kit"))
 st.write(lang(
@@ -221,8 +221,6 @@ st.warning(lang(
     "Never connect a multimeter set to current measurement directly across a voltage "
     "source! Ask a supervisor if you are unsure."
 ))
-if st.button(lang("Zur Erklärung: Einstellung Multimeter", "Open guide: Multimeter settings")):
-    st.switch_page("pages/h16_Einstellung_Multimeter.py")
 
 st.markdown(lang(
     "### 6 – Last: Euer elektrischer Verbraucher",
@@ -275,32 +273,28 @@ st.subheader(lang("Vor dem Experiment: kurzer Aufbau-Check", "Before the experim
 
 checkpunkte = [
     (
-        "Wasserstände und Startvolumen nach Anleitung kontrolliert",
-        "Water levels and starting volume checked according to the instructions"
+        "Destilliertes Wasser in den Gasspeicher eingefüllt und Füllstand gecheckt",
+        "Distilled water filled into the gas storage unit and water level checked"
     ),
     (
-        "H₂- und O₂-Schläuche richtig zugeordnet, fest aufgesteckt und knickfrei",
-        "H₂ and O₂ tubes matched correctly, securely attached and free of kinks"
+        "Destilliertes Wasser in beide Kammern des Elektrolyseurs eingefüllt bis zur Kennlinie",
+        "Both chambers of the electrolyzer filled with distilled water up to the marked fill line"
     ),
     (
-        "Regulator zunächst auf sichere Startstellung gesetzt",
-        "Regulator initially set to a safe starting position"
+        "Schläuche zwischen Elektrolyseur und Gasspeicher angeschlossen. Kontrolliert, ob alle Stopfen auf den nicht verwendeten Ausgängen sitzen",
+        "Tubes connected between the electrolyzer and gas storage unit. Checked that all unused outlets are securely closed with plugs"
     ),
     (
-        "Multimeter: Messart, Messbereich und Buchsen geprüft",
-        "Multimeter: Measurement type, range and sockets checked"
+        "Batterie in den Timer eingesetzt und Timer bereitgelegt",
+        "Battery inserted into the timer and timer ready for use"
     ),
     (
-        "Brennstoffzelle nur bei Bedarf und nach Einweisung angeschlossen bzw. entlüftet",
-        "Fuel cell connected or purged only when needed and after instruction"
+        "Multimeter auf den richtigen Messbereich und die richtige Einheit eingestellt und gemäß Versuchsbeschreibung korrekt angeschlossen",
+        "Multimeter set to the correct measurement range and unit, and connected correctly according to the experiment instructions"
     ),
     (
-        "Geeignete Last für den jeweiligen Versuch ausgewählt",
-        "Appropriate load selected for the experiment"
-    ),
-    (
-        "Timer bereitgelegt und Messablauf abgesprochen",
-        "Timer ready and measurement procedure agreed on"
+        "Bei Verwendung der Brennstoffzelle: Brennstoffzelle beim Anschließen entlüftet",
+        "When using the fuel cell: Fuel cell purged during connection"
     ),
 ]
 
