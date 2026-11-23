@@ -142,7 +142,7 @@ def h2_sidebar():
             st.switch_page("pages/h12_Erklärung_Wasserstoff.py")
 
         if st.button("Erklärung Multimeter", use_container_width=True):
-            st.switch_page("pages/h16_einstellung_multimeter.py")
+            st.switch_page("pages/h16_Einstellung_multimeter.py")
 
         if st.button("Sammlung Videos", use_container_width=True):
             st.switch_page("pages/h17_Sammlung_Videos.py")
