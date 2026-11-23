@@ -94,3 +94,74 @@ if st.button("I-U-Kennlinie zeichnen", type="primary", use_container_width=True)
 
 if st.session_state.get("h1_diagramm_anzeigen", False):
     messpunkte = [
+        (strom, spannung)
+        for strom, spannung in zip(stromwerte, spannungen)
+        if spannung is not None
+    ]
+    if not messpunkte:
+        st.warning("Bitte gebt zuerst mindestens einen Spannungswert ein.")
+    else:
+        st.subheader("I-U-Kennlinie des Elektrolyseurs")
+        x = np.array([punkt[0] for punkt in messpunkte], dtype=float)
+        y = np.array([punkt[1] for punkt in messpunkte], dtype=float)
+
+        st.write(
+            "Für die Abschätzung der Zersetzungsspannung könnt ihr den annähernd "
+            "geradlinigen Abschnitt der Kennlinie auswählen. Die Gerade wird bis "
+            "zur Spannungsachse bei **I = 0 mA** verlängert."
+        )
+        grenze = st.select_slider(
+            "Geradenabschnitt ab Stromstärke (mA)",
+            options=list(range(0, 501, 50)),
+            value=200,
+            key="h1_fitschwelle",
+        )
+        fit_maske = x >= grenze
+        fit_moeglich = np.count_nonzero(fit_maske) >= 2
+
+        fig, ax = plt.subplots(figsize=(9, 5))
+        ax.plot(x, y, "o-", linewidth=1.8, label="Eure Messwerte")
+
+        if fit_moeglich:
+            steigung, achsenabschnitt = np.polyfit(x[fit_maske], y[fit_maske], 1)
+            fit_x = np.linspace(0, max(x), 200)
+            ax.plot(fit_x, steigung * fit_x + achsenabschnitt, "--", label="Verlängerte Ausgleichsgerade")
+            ax.scatter([0], [achsenabschnitt], zorder=5, label="Geschätzte Zersetzungsspannung")
+
+        ax.set_title("I-U-Kennlinie Elektrolyseur")
+        ax.set_xlabel("Strom I in mA")
+        ax.set_ylabel("Spannung U in mV")
+        ax.set_xlim(0, 500)
+        ax.set_xticks(stromwerte)
+        ax.grid(alpha=0.3)
+        ax.legend()
+        st.pyplot(fig)
+        plt.close(fig)
+
+        if fit_moeglich:
+            st.metric("Geschätzte Zersetzungsspannung", f"{achsenabschnitt:.1f} mV")
+            st.caption(
+                "Dieser Wert ist eine mathematische Näherung aus den gewählten Messpunkten, "
+                "nicht automatisch ein exakter physikalischer Wert. Wählt nur den "
+                "tatsächlich annähernd linearen Teil eurer Kennlinie."
+            )
+        else:
+            st.info("Für die Ausgleichsgerade werden mindestens zwei Messwerte im gewählten Bereich benötigt.")
+
+        st.divider()
+        st.subheader("Fragen")
+        st.write(
+            "Nähert den annähernd linearen Verlauf eurer Kennlinie durch eine Gerade an. "
+            "Welchen Schnittpunkt mit der Spannungsachse erhaltet ihr? "
+            "Dieser Wert ist eure näherungsweise Zersetzungsspannung."
+        )
+        st.text_area("Wie groß ist eure Zersetzungsspannung?", key="h1_antwort_1")
+        st.text_area("Was fällt euch am Verlauf eurer Kurve auf?", key="h1_antwort_2")
+
+        with st.expander("Erklärung zur Auswertung"):
+            st.write(
+                "Im annähernd linearen Bereich steigt die Spannung mit wachsender "
+                "Stromstärke ungefähr geradlinig an. Verlängert man diesen Abschnitt "
+                "bis I = 0 mA, erhält man den Achsenabschnitt als experimentelle "
+                "Näherung der Zersetzungsspannung."
+            )
