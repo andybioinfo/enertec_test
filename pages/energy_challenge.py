@@ -1,378 +1,366 @@
-"""EnerTec Energie-Challenge – bilingual, self-contained Streamlit mini-game.
+"""EnerTec – Energie-Landkarte / Energy Map Challenge.
 
-Put this file at pages/energie_challenge.py. Requires the existing language.py
-and navigation.py from the EnerTec project; no extra graphics or data files.
+A clickable, fully self-contained map-building game for Streamlit.
+Uses only the existing EnerTec language.py and navigation.py modules.
+Save as pages/h19_Energie_Landkarte.py.
 """
+
+from __future__ import annotations
 
 import math
 import random
-from datetime import datetime
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
 from language import lang
-
-st.set_page_config(page_title="EnerTec | Energy City Challenge", layout="wide", page_icon="⚡")
-
-# This is a cross-topic game: hide the default page list, but leave a prominent home button.
 from navigation import hide_default_sidebar_nav
+
+st.set_page_config(page_title="EnerTec – Energie-Landkarte", page_icon="⚡", layout="wide")
 hide_default_sidebar_nav()
 
-KEY = "enertec_energy_challenge_v1"
-PRICES = {"solar": 8, "wind": 12, "battery": 9, "hydrogen": 11}
-START_BUDGET = 120
-ROUND_HOURS = 4
-HOURS = 24
-SCENARIOS = {
-    "sun": {"seed": 131, "solar": 1.20, "wind": 0.70, "cloud": 0.92},
-    "wind": {"seed": 275, "solar": 0.82, "wind": 1.22, "cloud": 0.83},
-    "chaos": {"seed": 431, "solar": 0.95, "wind": 0.99, "cloud": 0.72},
+# -------- Game rules: illustrative values, not real-world project data --------
+BUDGET = 150
+DAY_LENGTH = 24
+TERRAIN = [
+    ["hill", "hill", "hill", "plain", "plain", "hill", "hill", "hill"],
+    ["hill", "forest", "plain", "plain", "river", "plain", "hill", "hill"],
+    ["forest", "plain", "city", "city", "river", "plain", "plain", "hill"],
+    ["forest", "plain", "city", "city", "river", "plain", "plain", "plain"],
+    ["plain", "plain", "plain", "plain", "river", "plain", "plain", "plain"],
+    ["plain", "plain", "plain", "plain", "river", "plain", "plain", "plain"],
+]
+TERRAIN_ICONS = {"hill": "⛰️", "plain": "🌾", "forest": "🌲", "river": "🌊", "city": "🏙️"}
+TERRAIN_NAMES = {
+    "hill": ("Hügel", "Hill"), "plain": ("Freifläche", "Open land"),
+    "forest": ("Wald (geschützt)", "Forest (protected)"),
+    "river": ("Fluss", "River"), "city": ("Stadt", "City"),
 }
+# Cost = game coins. Power = maximum illustrative MW; storage capacity in MWh.
+TECH = {
+    "solar": {"icon": "☀️", "title": ("Solarpark", "Solar farm"), "cost": 12, "power": 2.2, "terrain": {"plain"}},
+    "wind": {"icon": "🌬️", "title": ("Windrad", "Wind turbine"), "cost": 20, "power": 2.8, "terrain": {"hill", "plain"}},
+    "hydro": {"icon": "💦", "title": ("Wasserkraft", "Hydropower"), "cost": 26, "power": 1.65, "terrain": {"river"}},
+    "battery": {"icon": "🔋", "title": ("Batteriespeicher", "Battery storage"), "cost": 18, "capacity": 3.5, "terrain": {"plain"}},
+    "hydrogen": {"icon": "🧪", "title": ("H₂-Speicher", "H₂ storage"), "cost": 24, "capacity": 8.0, "terrain": {"plain"}},
+}
+WEATHER = {
+    "balanced": ("🌤️ Wechselhaft", "🌤️ Mixed weather"),
+    "sunny": ("☀️ Sonnenschein", "☀️ Sunny"),
+    "windy": ("🌪️ Stürmischer Tag", "🌪️ Windy"),
+    "cloudy": ("🌧️ Regenwetter", "🌧️ Rainy"),
+}
+STATE = "enertec_map_challenge_v2"
 
 
-def fresh_state():
-    return {"phase": "planning", "plan": {}, "scenario": "chaos", "rows": [],
-            "round": 0, "battery_charge": 0.0, "hydrogen_charge": 0.0,
-            "saves_left": 2, "saves_used": 0, "score": 0, "history": [],
-            "last_action": "none", "events": [], "reveal": False}
+def new_game():
+    return {"buildings": {}, "chosen": "solar", "weather": "balanced", "results": None,
+            "notice": "", "runs": [], "show_rules": False}
 
 
-if KEY not in st.session_state:
-    st.session_state[KEY] = fresh_state()
-game = st.session_state[KEY]
+if STATE not in st.session_state:
+    st.session_state[STATE] = new_game()
+game = st.session_state[STATE]
 
 
-@st.cache_data
-def create_day(scenario):
-    """Deterministic educational 24h generation & demand profiles (MW)."""
-    p = SCENARIOS[scenario]
-    rng = random.Random(p["seed"])
-    day = []
-    for h in range(HOURS):
-        sunlight = max(0.0, math.sin(math.pi * (h - 6) / 12))
-        cloud = max(0.25, min(1.1, p["cloud"] + rng.uniform(-0.2, 0.18)))
-        solar_mw_per_unit = 0.95 * p["solar"] * sunlight * cloud
-        wind_factor = max(0.11, min(0.92, 0.48 * p["wind"] + 0.22 * math.sin(h * 0.62 + p["seed"]) + rng.uniform(-0.15, 0.15)))
-        wind_mw_per_unit = 1.35 * wind_factor
-        demand = 2.45 + 0.75 * math.exp(-((h - 8) / 2.6) ** 2) + 1.6 * math.exp(-((h - 19) / 3.2) ** 2)
-        demand += rng.uniform(-0.15, 0.15)
-        event = ""
-        if scenario == "chaos" and h in (10, 11):
-            solar_mw_per_unit *= 0.25
-            event = "cloud"
-        if scenario == "chaos" and h in (17, 18):
-            demand += 0.95
-            event = "concert"
-        if scenario == "wind" and h in (4, 5):
-            wind_mw_per_unit *= 0.35
-            event = "calm"
-        day.append({"hour": h, "solar_unit": solar_mw_per_unit,
-                    "wind_unit": wind_mw_per_unit, "demand": demand, "event": event})
-    return day
+def counts():
+    return {tech: list(game["buildings"].values()).count(tech) for tech in TECH}
 
 
-def simulate_hours(plan, scenario, initial_battery, initial_hydrogen, start, action):
-    """One hour steps, power in MW and energy in MWh; diesel is the balancing backup.
+def price():
+    return sum(TECH[tech]["cost"] for tech in game["buildings"].values())
 
-    Battery has 90% charging and discharging efficiency.
-    Hydrogen tank is represented in *deliverable electrical* MWh, with a
-    simplified 38% electricity-to-electricity efficiency applied on charging.
-    """
-    data = create_day(scenario)
-    b_capacity = plan["battery"] * 2.4
-    h_capacity = plan["hydrogen"] * 4.5
-    battery = min(initial_battery, b_capacity)
-    hydrogen = min(initial_hydrogen, h_capacity)
-    rows = []
-    for hour in range(start, min(start + ROUND_HOURS, HOURS)):
-        d = data[hour]
-        solar = d["solar_unit"] * plan["solar"]
-        wind = d["wind_unit"] * plan["wind"]
-        demand = d["demand"] * (0.82 if action == "save" else 1.0)
-        renewable = solar + wind
-        difference = renewable - demand
-        battery_out = hydrogen_out = backup = wasted = 0.0
-        if difference >= 0:
-            # Charge electrical battery first, then convert surplus into H2.
-            battery_input = min(difference, plan["battery"] * 1.1,
-                                max(0, (b_capacity - battery) / 0.9))
-            battery += battery_input * 0.9
-            difference -= battery_input
-            hydrogen_input = min(difference, plan["hydrogen"] * 1.4,
-                                 max(0, (h_capacity - hydrogen) / 0.38))
-            hydrogen += hydrogen_input * 0.38
-            wasted = max(0, difference - hydrogen_input)
+
+def place(row, col):
+    position = (row, col)
+    selected = game["chosen"]
+    terrain = TERRAIN[row][col]
+    if selected == "erase":
+        if position in game["buildings"]:
+            game["buildings"].pop(position)
+            game["notice"] = lang("Anlage entfernt. Münzen zurückerhalten!", "Building removed. Coins refunded!")
         else:
-            missing = -difference
-            battery_out = min(missing, plan["battery"] * 1.1, battery * 0.9)
-            battery -= battery_out / 0.9
-            missing -= battery_out
-            hydrogen_out = min(missing, plan["hydrogen"] * 0.85, hydrogen)
-            hydrogen -= hydrogen_out
-            missing -= hydrogen_out
-            backup = max(0, missing)
-        rows.append({"hour": hour, "demand": demand, "solar": solar, "wind": wind,
-                     "battery_used": battery_out, "hydrogen_used": hydrogen_out,
-                     "backup": backup, "spill": wasted, "battery_level": battery,
-                     "hydrogen_level": hydrogen, "event": d["event"], "action": action})
-    return rows, battery, hydrogen
+            game["notice"] = lang("Hier steht keine Anlage.", "No building on this tile.")
+    elif position in game["buildings"]:
+        game["notice"] = lang("Feld belegt! Wähle zuerst 'Entfernen'.", "Tile occupied! Select 'Remove' first.")
+    elif terrain not in TECH[selected]["terrain"]:
+        game["notice"] = lang("Hier darfst du diese Anlage nicht bauen. Schau auf die Landschaft!",
+                              "You cannot build that here. Look at the terrain!")
+    elif price() + TECH[selected]["cost"] > BUDGET:
+        game["notice"] = lang("Zu wenig Münzen. Entferne eine andere Anlage.",
+                              "Not enough coins. Remove another building.")
+    else:
+        game["buildings"][position] = selected
+        game["notice"] = lang("Anlage errichtet! 🎉", "Building placed! 🎉")
+    game["results"] = None
 
 
-def tally(rows, plan):
-    if not rows:
-        return {"coverage": 0, "green": 0, "backup": 0, "demand": 0, "spill": 0, "co2": 0, "points": 0}
-    demand = sum(x["demand"] for x in rows)
+def generation_profile(weather):
+    """24 hourly model records, units of MW / MW per plant. Deterministic."""
+    factors = {"balanced": (0.9, 1.0, 1.0), "sunny": (1.2, 0.7, 0.85),
+               "windy": (0.65, 1.4, 1.05), "cloudy": (0.4, 0.9, 1.15)}
+    sol_factor, wind_factor, river_factor = factors[weather]
+    rng = random.Random({"balanced": 13, "sunny": 24, "windy": 35, "cloudy": 46}[weather])
+    records = []
+    for hour in range(DAY_LENGTH):
+        daylight = max(0.0, math.sin((hour - 6) / 12 * math.pi))
+        cloud = 0.76 + rng.uniform(-0.13, 0.16)
+        solar_factor = min(1.0, sol_factor * daylight * cloud)
+        wind = max(0.12, min(0.95, 0.42 * wind_factor + 0.17 * math.sin(0.66 * hour + 1)
+                                 + rng.uniform(-0.13, 0.13)))
+        demand = (3.7 + 0.7 * math.exp(-((hour - 8) / 2.6) ** 2)
+                  + 1.65 * math.exp(-((hour - 19) / 3.2) ** 2))
+        if hour in (18, 19, 20):
+            demand += 0.45  # City event
+        records.append({"hour": hour, "solar_unit": TECH["solar"]["power"] * solar_factor,
+                        "wind_unit": TECH["wind"]["power"] * wind,
+                        "hydro_unit": TECH["hydro"]["power"] * river_factor,
+                        "demand": demand})
+    return records
+
+
+def run_simulation(buildings, weather):
+    """Hour-by-hour balance. Storage initial state: 25% full, not free renewable energy.
+
+    To avoid gifting free energy, batteries and H2 start EMPTY; charge from daytime surplus.
+    Battery 90% charge * 90% discharge, H2 38% electricity->electricity overall.
+    Storage state is *deliverable electric energy* for H2, and internal energy for battery.
+    Back-up generation balances any shortfall (no physical blackouts).
+    """
+    n = {code: list(buildings.values()).count(code) for code in TECH}
+    bat_cap = TECH["battery"]["capacity"] * n["battery"]
+    h_cap = TECH["hydrogen"]["capacity"] * n["hydrogen"]
+    bat_energy = 0.0
+    h_energy = 0.0
+    rows = []
+    for hour in generation_profile(weather):
+        solar = n["solar"] * hour["solar_unit"]
+        wind = n["wind"] * hour["wind_unit"]
+        hydro = n["hydro"] * hour["hydro_unit"]
+        demand = hour["demand"]
+        renewable = solar + wind + hydro
+        net = renewable - demand
+        battery_out = hydrogen_out = emergency = surplus_lost = 0.0
+        if net >= 0:
+            # Charging rate in MW, charge eff. = 0.90
+            bat_in = min(net, n["battery"] * 1.9, max(0.0, (bat_cap - bat_energy) / 0.90))
+            bat_energy += bat_in * 0.90
+            net -= bat_in
+            # Hydrogen: round-trip efficiency 0.38 (already included on charge)
+            h_in = min(net, n["hydrogen"] * 1.6, max(0.0, (h_cap - h_energy) / 0.38))
+            h_energy += h_in * 0.38
+            surplus_lost = max(0.0, net - h_in)
+        else:
+            need = -net
+            battery_out = min(need, n["battery"] * 1.9, bat_energy * 0.90)
+            bat_energy -= battery_out / 0.90
+            need -= battery_out
+            hydrogen_out = min(need, n["hydrogen"] * 1.5, h_energy)
+            h_energy -= hydrogen_out
+            need -= hydrogen_out
+            emergency = max(0.0, need)
+        rows.append({"hour": hour["hour"], "demand": demand, "solar": solar,
+                     "wind": wind, "hydro": hydro, "battery": battery_out,
+                     "hydrogen": hydrogen_out, "backup": emergency,
+                     "spill": surplus_lost, "battery_level": bat_energy, "hydrogen_level": h_energy})
+    total_demand = sum(x["demand"] for x in rows)
     backup = sum(x["backup"] for x in rows)
     spill = sum(x["spill"] for x in rows)
-    green = max(0, demand - backup)
-    coverage = 100 * green / max(demand, 0.0001)
-    # The game's objective intentionally rewards serving demand, renewable share,
-    # low curtailment, and sensible budget use. This is a game score, not a model KPI.
-    budget_spent = sum(plan[k] * PRICES[k] for k in PRICES)
-    points = round(max(0, 750 * green / max(demand, .0001)
-                       + 170 * (1 - min(spill / max(demand, .0001), 1))
-                       + 80 * (1 - budget_spent / START_BUDGET)))
-    return {"coverage": coverage, "green": green, "backup": backup, "demand": demand,
-            "spill": spill, "co2": backup * 0.7, "points": points}
+    fraction = max(0.0, 1.0 - backup / max(total_demand, 0.00001))
+    # Transparent game score; 1000 max. No claim of real economic optimality.
+    score = round(850 * fraction + 100 * (1 - min(spill / max(total_demand, 1), 1))
+                  + 50 * (1 - sum(TECH[k]["cost"] for k in buildings.values()) / BUDGET))
+    return {"rows": rows, "score": score, "coverage": fraction * 100,
+            "demand": total_demand, "backup": backup, "spill": spill,
+            "co2": backup * 0.7, "green": total_demand - backup}
 
 
-def number(v, decimals=1):
-    s = f"{v:.{decimals}f}"
-    return s.replace(".", ",") if lang("DE", "EN") == "DE" else s
+def number(n, digits=1):
+    value = f"{n:.{digits}f}"
+    return value.replace(".", ",") if lang("DE", "EN") == "DE" else value
 
 
+# -------- Page visuals --------------------------------------------------------
 st.markdown("""
 <style>
-.block-container {max-width: 1250px; padding-top: 1rem; padding-bottom: 3rem;}
-.challenge-hero {background: linear-gradient(115deg,#123d63,#08746d 65%,#0c9ca2);
-    border-radius: 23px; padding: 1.4rem 1.8rem; color: white; margin-bottom: 1.2rem;
-    box-shadow:0 12px 30px rgba(0,80,110,.14);}
-.challenge-hero h1 {color:white !important; font-size:2.15rem; margin:.25rem 0 .5rem;}
-.challenge-hero p {color:#eefcff !important; font-size:1.02rem; margin-bottom:.35rem;}
-.challenge-label {text-transform:uppercase; letter-spacing:.12em; font-size:.75rem;
-    font-weight:800; color:#b8f2e5;}
-.event-tag {background:rgba(24,130,140,.09);border-left:4px solid #15938b;
-    border-radius:9px;padding:.75rem 1rem;margin:.35rem 0 1rem;}
-div[data-testid="stButton"] > button {border-radius:12px; font-weight:700; min-height:45px;}
-</style>
-""", unsafe_allow_html=True)
-
-with st.sidebar:
-    st.header("⚡ " + lang("Energie-Challenge", "Energy Challenge"))
-    if st.button(lang("← Zur Startseite", "← Back to home"), use_container_width=True):
-        st.switch_page("Startseite.py")
-    if st.button(lang("🔄 Challenge zurücksetzen", "🔄 Reset challenge"), use_container_width=True):
-        st.session_state[KEY] = fresh_state()
-        st.rerun()
-    st.caption(lang("Deine Sprachauswahl bleibt erhalten.", "Your language selection is preserved."))
+.block-container {max-width:1360px;padding-top:1.1rem;padding-bottom:2rem;}
+.map-hero {padding:1.15rem 1.5rem;border-radius:20px;background:linear-gradient(115deg,#143c68,#187864);
+ color:white;margin-bottom:1rem;box-shadow:0 10px 26px rgba(6,70,90,.12)}
+.map-hero h1,.map-hero p{color:white!important;margin:.35rem 0;}
+.map-hero p{opacity:.95}
+.map-eyebrow{letter-spacing:.14em;font-size:.75rem;font-weight:800;color:#c9fcdb;}
+.tile-title{font-weight:700;color:#258c77;font-size:.82rem}
+div[data-testid="stButton"] > button {border-radius:10px;font-weight:700;}
+/* Terrain coloring: map cells are native buttons and remain keyboard accessible. */
+""" + "\n".join(
+    f'.st-key-map_tile_{r}_{c} button {{'
+    f'background:{ {"plain":"#e8f5c5","hill":"#dbc9b7","forest":"#aad6b7","river":"#bde8fa","city":"#d4dce6"}[terrain] };'
+    'color:#173950!important;border:1px solid rgba(40,85,70,.3)!important;'
+    'min-height:57px;width:100%;font-size:1.27rem;'
+    '}'
+    for r, row in enumerate(TERRAIN) for c, terrain in enumerate(row)
+) + "\n</style>", unsafe_allow_html=True)
 
 st.markdown(
-    "<div class='challenge-hero'><div class='challenge-label'>ENERTEC · CITY BUILDER</div>"
-    f"<h1>⚡ {lang('Rette die Energiestadt!', 'Power the City!')}</h1>"
-    f"<p>{lang('24 Stunden. Ein begrenztes Budget. Strom für alle. Deine Entscheidungen zählen!', '24 hours. A limited budget. Power for everyone. Your decisions matter!')}</p>"
-    "</div>", unsafe_allow_html=True)
+    '<div class="map-hero"><div class="map-eyebrow">ENERTEC · ENERGY MAP CHALLENGE</div>'
+    f'<h1>🗺️ {lang("Baue deine eigene Energielandschaft!", "Build your energy landscape!")}</h1>'
+    f'<p>{lang("Setze Kraftwerke auf die Karte, bleib im Budget und versorge die Stadt mit möglichst viel erneuerbarer Energie.", "Place power plants on the map, stay on budget and power your city with renewable energy.")}</p></div>',
+    unsafe_allow_html=True,
+)
 
-if game["phase"] == "planning":
-    st.subheader("🏗️ " + lang("Mission 1: Baue dein Energiesystem", "Mission 1: Build your energy system"))
-    st.write(lang(
-        "Die Stadt braucht Tag und Nacht Strom. Baue Solaranlagen und Windräder, "
-        "speichere Überschüsse in Batterien oder Wasserstoff und überstehe Wetterüberraschungen. "
-        "Bei Strommangel springt ein Diesel-Notkraftwerk ein – das kostet Klimapunkte!",
-        "The city needs electricity all day and night. Build solar panels and wind turbines, "
-        "store surplus energy in batteries or hydrogen, and survive weather surprises. "
-        "A diesel backup generator covers shortages – but costs climate points!"))
-    st.caption(lang("Alle Werte sind vereinfachte Spielannahmen, keine realen Anlagenpreise oder Prognosen.",
-                    "All values are simplified game assumptions, not real equipment prices or forecasts."))
-
-    scenario = st.selectbox(lang("🌤️ Wähle das Wetter", "🌤️ Choose the weather"),
-        options=["sun", "wind", "chaos"],
-        format_func=lambda s: {"sun":lang("☀️ Sonnentag", "☀️ Sunny day"),
-                                "wind":lang("🌬️ Windtag", "🌬️ Windy day"),
-                                "chaos":lang("🌦️ Überraschungsmix (empfohlen)", "🌦️ Surprise mix (recommended)")}[s],
-        key="challenge_scenario_select")
-    st.markdown("#### " + lang("Dein Baubudget: 120 Münzen 🪙", "Your construction budget: 120 coins 🪙"))
-    items = [
-        ("solar", "☀️", lang("Solaranlagen", "Solar arrays"), lang("Viel Strom bei Tageslicht", "Strong in daylight")),
-        ("wind", "🌬️", lang("Windräder", "Wind turbines"), lang("Auch nachts produktiv", "Generate even at night")),
-        ("battery", "🔋", lang("Batteriespeicher", "Battery storage"), lang("Effizient, aber begrenzter Speicher", "Efficient but limited storage")),
-        ("hydrogen", "💧", lang("Wasserstoffspeicher", "Hydrogen storage"), lang("Speichert Energie länger, mit Verlusten", "Longer storage, with losses")),
-    ]
-    col_a, col_b = st.columns(2, gap="large")
-    settings = {}
-    for i, (key, emoji, title, detail) in enumerate(items):
-        with (col_a if i % 2 == 0 else col_b):
-            st.markdown(f"**{emoji} {title}** · {PRICES[key]} 🪙")
-            st.caption(detail)
-            settings[key] = st.slider(title, 0, 10, value={"solar":4,"wind":4,"battery":2,"hydrogen":2}[key],
-                                      key=f"challenge_plan_{key}", label_visibility="collapsed")
-    cost = sum(PRICES[k] * settings[k] for k in PRICES)
-    remaining = START_BUDGET - cost
-    c1, c2, c3 = st.columns(3)
-    c1.metric(lang("Verplant", "Spent"), f"{cost} 🪙")
-    c2.metric(lang("Übrig", "Remaining"), f"{remaining} 🪙")
-    c3.metric(lang("Anlagen & Speicher", "Units & storage"), sum(settings.values()))
-    st.progress(min(1.0, cost / START_BUDGET))
-    if remaining < 0:
-        st.error(lang("Budget überschritten! Entferne ein paar Anlagen.", "Over budget! Remove a few units."))
-    if settings["solar"] + settings["wind"] == 0:
-        st.warning(lang("Du brauchst mindestens eine Solar- oder Windanlage.", "You need at least one solar or wind unit."))
-    st.info(lang(
-        "💡 **Tipp:** Die Sonne scheint nicht nachts! Eine Mischung aus Solar, Wind und Speicher ist oft cleverer als alles auf eine Karte zu setzen.",
-        "💡 **Tip:** The sun does not shine at night! A mix of solar, wind and storage can be smarter than betting on one technology."))
-    if st.button(lang("🚀 STADT STARTEN", "🚀 LAUNCH CITY"), type="primary", use_container_width=True,
-                 disabled=remaining < 0 or settings["solar"] + settings["wind"] == 0):
-        game.update({"phase":"running", "plan": settings.copy(), "scenario":scenario,
-                     "rows":[], "round":0, "battery_charge": settings["battery"]*2.4*0.35,
-                     "hydrogen_charge": settings["hydrogen"]*4.5*0.25,
-                     "saves_left":2, "saves_used":0, "score":0, "last_action":"none"})
+with st.sidebar:
+    st.subheader("🗺️ " + lang("Energie-Landkarte", "Energy map"))
+    if st.button(lang("← Zur Startseite", "← Back to homepage"), use_container_width=True):
+        st.switch_page("Startseite.py")
+    if st.button(lang("🔄 Karte zurücksetzen", "🔄 Reset map"), use_container_width=True):
+        st.session_state[STATE] = new_game()
         st.rerun()
+    st.caption(lang("Die Sprache bleibt beim Wechsel erhalten.", "Language selection is preserved."))
 
-elif game["phase"] == "running":
-    r = game["round"]
-    start = r * ROUND_HOURS
-    end = start + ROUND_HOURS
-    st.subheader(f"🎮 {lang('Mission 2: Halte die Lichter an!', 'Mission 2: Keep the lights on!')}")
-    st.progress(r / 6)
-    st.caption(lang(f"Runde {r+1} von 6 · {start:02d}:00–{end:02d}:00 Uhr",
-                    f"Round {r+1} of 6 · {start:02d}:00–{end:02d}:00"))
-    total = tally(game["rows"],game["plan"])
-    top = st.columns(4)
-    top[0].metric(lang("Grüner Strom", "Green energy share"), f"{number(total['coverage'],0)} %" if game["rows"] else "—")
-    top[1].metric("🔋 " + lang("Batterie", "Battery"), f"{number(game['battery_charge'])} MWh")
-    top[2].metric("💧 H₂", f"{number(game['hydrogen_charge'])} MWh")
-    top[3].metric("🛟 " + lang("Spar-Joker", "Save boosts"), str(game["saves_left"]))
-
-    day = create_day(game["scenario"])
-    event_codes = sorted({day[h]["event"] for h in range(start,end)}-{''})
-    event_text = {"cloud":lang("☁️ Wolkenfront! Die Solaranlagen liefern zeitweise deutlich weniger.",
-                               "☁️ Cloud front! Solar generation drops for a while."),
-                  "concert":lang("🎤 Stadtfest! Am Abend steigt der Stromverbrauch.",
-                                 "🎤 City festival! Evening electricity demand spikes."),
-                  "calm":lang("🍃 Flaute! Der Wind schläft für einige Stunden ein.",
-                              "🍃 Wind lull! Wind generation drops for a few hours.")}
-    if event_codes:
-        for event in event_codes:
-            st.warning(event_text[event])
-    else:
-        st.info(lang("🌈 Wetterbericht: Keine besonderen Ereignisse in dieser Runde.",
-                     "🌈 Weather report: No special events this round."))
-
-    st.write(lang("Was ist dein Zug? Entscheide vor dem Start der nächsten vier Stunden:",
-                  "What's your move? Decide before the next four hours begin:"))
-    choices = ["none"] + (["save"] if game["saves_left"] else [])
-    action = st.radio(lang("Deine Aktion", "Your action"), options=choices,
-        format_func=lambda x: lang("⚡ Normalbetrieb", "⚡ Normal operation") if x=="none" else
-                lang("🛟 Spar-Joker einsetzen: 18 % weniger Bedarf (1 von 2)",
-                     "🛟 Use an energy-saving boost: 18% less demand (1 of 2)"),
-        key=f"challenge_action_{r}")
-    st.caption(lang("Der Spar-Joker steht insgesamt zweimal zur Verfügung. Er reduziert den Bedarf nur in dieser Runde.",
-                    "You can use the energy-saving boost twice in total. It reduces demand only for this round."))
-    if st.button(lang("▶️ Nächste 4 Stunden simulieren", "▶️ Simulate next 4 hours"),
-                 type="primary", use_container_width=True):
-        newrows, batt, h2 = simulate_hours(game["plan"],game["scenario"],
-            game["battery_charge"],game["hydrogen_charge"], start, action)
-        game["rows"].extend(newrows)
-        game["battery_charge"] = batt
-        game["hydrogen_charge"] = h2
-        game["round"] += 1
-        game["last_action"] = action
-        if action == "save":
-            game["saves_left"] -= 1
-            game["saves_used"] += 1
-        if game["round"] == 6:
-            game["phase"] = "results"
-        st.rerun()
-
-    if game["rows"]:
-        st.divider()
-        st.subheader("📊 " + lang("Deine Stadt bisher", "Your city so far"))
-        df = pd.DataFrame(game["rows"])
-        chart = df.set_index("hour")[["demand", "solar", "wind", "battery_used", "hydrogen_used", "backup"]]
-        chart.columns = [lang("Verbrauch", "Demand"), lang("Solar", "Solar"),
-                         lang("Wind", "Wind"), lang("Batterie", "Battery"),
-                         lang("Wasserstoff", "Hydrogen"), lang("Notstrom", "Backup")]
-        st.line_chart(chart)
-        st.caption(lang("Leistung in MW · Jede Stunde entspricht einer Stunde Simulation.",
-                        "Power in MW · Each timestep represents one hour."))
-        if game["last_action"] == "save":
-            st.success(lang("💪 Gute Teamarbeit! Eure Sparaktion hat den Bedarf in der letzten Runde gesenkt.",
-                            "💪 Nice teamwork! Your saving boost reduced demand in the last round."))
-
-else:
-    result = tally(game["rows"],game["plan"])
-    score = result["points"]
-    if score >= 880:
-        medal, rank_de, rank_en = "🏆", "ENERGIE-LEGENDE", "ENERGY LEGEND"
-    elif score >= 720:
-        medal, rank_de, rank_en = "🥇", "STADTRETTER", "CITY SAVER"
-    elif score >= 560:
-        medal, rank_de, rank_en = "🥈", "ENERGIE-PROFI", "ENERGY PRO"
-    else:
-        medal, rank_de, rank_en = "🔧", "NÄCHSTER VERSUCH!", "TRY AGAIN!"
-    st.header(f"{medal} {lang('Mission geschafft!', 'Mission completed!')}")
-    st.subheader(lang(rank_de,rank_en))
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("⭐ " + lang("Punkte", "Points"),score)
-    c2.metric("🌱 " + lang("Grüner Strom", "Green share"),f"{number(result['coverage'])} %")
-    c3.metric("🛢️ " + lang("Notstrom", "Backup"),f"{number(result['backup'])} MWh")
-    c4.metric("🌍 " + lang("CO₂ aus Notstrom", "Backup CO₂"),f"{number(result['co2'])} t")
-    st.progress(min(1.0, score/1000))
-    if result["backup"] <= 0.01:
-        st.success(lang("🌟 Kein Notstrom nötig – die Stadt wurde komplett durch erneuerbare Energie und Speicher versorgt!",
-                        "🌟 No backup needed – the city was powered entirely by renewables and storage!"))
-    else:
-        st.info(lang("💡 Stromausfälle wurden durch das Diesel-Notkraftwerk verhindert. Probiere andere Anlagenkombinationen, um weniger Notstrom zu brauchen.",
-                     "💡 The diesel backup prevented power cuts. Try another mix to reduce reliance on it."))
-    st.caption(lang("Spiel-CO₂-Wert: vereinfachter Faktor 0,7 t CO₂ pro MWh Diesel-Notstrom; kein vollständiger Lebenszyklusvergleich.",
-                    "Game CO₂ value: simplified 0.7 t CO₂ per MWh of diesel backup; not a full life-cycle comparison."))
-    df = pd.DataFrame(game["rows"])
-    plot = df.set_index("hour")[["demand","solar","wind","backup"]]
-    plot.columns = [lang("Bedarf", "Demand"),"Solar","Wind",lang("Notstrom", "Backup")]
-    st.subheader("📉 " + lang("24-Stunden-Analyse", "24-hour analysis"))
-    st.line_chart(plot)
-    st.markdown("#### " + lang("Deine Auszeichnungen", "Your achievements"))
-    if result["coverage"] >= 95:
-        st.write(lang("🏅 **Fast fossilfrei:** Mindestens 95 % des Verbrauchs grün gedeckt.",
-                      "🏅 **Almost fossil-free:** At least 95% of demand covered by green electricity."))
-    if game["saves_used"] > 0:
-        st.write(lang("🛟 **Energiespar-Held:** Du hast bewusst Energie gespart.",
-                      "🛟 **Energy-saving hero:** You took action to reduce demand."))
-    if game["plan"]["solar"] and game["plan"]["wind"] and game["plan"]["battery"] and game["plan"]["hydrogen"]:
-        st.write(lang("🧩 **Teamwork:** Alle vier Technologien eingesetzt.",
-                      "🧩 **Teamwork:** Used all four technologies."))
-    st.write(lang("🔬 **Lernpunkt:** Wasserstoff ist ein Energiespeicher, keine Energiequelle. Beim Umwandeln geht Energie verloren.",
-                  "🔬 **Learning point:** Hydrogen stores energy; it is not an energy source. Conversion causes energy losses."))
-    if not game.get("recorded", False):
-        game["history"].append({"score":score, "coverage":result["coverage"],
-                                "scenario":game["scenario"], "time":datetime.now().strftime("%H:%M")})
-        game["recorded"] = True
-    with st.expander(lang("🏁 Deine bisherigen Versuche (nur in dieser Sitzung)",
-                          "🏁 Your previous attempts (this session only)")):
-        rankdf = pd.DataFrame(sorted(game["history"],key=lambda x:x["score"], reverse=True))
-        st.dataframe(rankdf,hide_index=True,use_container_width=True)
+side, main = st.columns([1, 2.25], gap="large")
+with side:
+    st.subheader(lang("🏗️ Wähle deine Anlage", "🏗️ Pick a building"))
+    options = list(TECH) + ["erase"]
+    choice = st.radio(
+        lang("Bauwerkzeug", "Building tool"), options=options,
+        format_func=lambda k: (f'{TECH[k]["icon"]} {lang(*TECH[k]["title"])} · {TECH[k]["cost"]} 🪙'
+                               if k in TECH else lang("🧹 Anlage entfernen", "🧹 Remove building")),
+        key="map_challenge_selected", label_visibility="collapsed",
+    )
+    game["chosen"] = choice
+    cost = price()
+    remaining = BUDGET - cost
+    c1,c2 = st.columns(2)
+    c1.metric(lang("Budget übrig", "Budget left"), f"{remaining} 🪙")
+    c2.metric(lang("Gebaut", "Built"), len(game["buildings"]))
+    st.progress(cost / BUDGET)
+    st.caption(lang("Bauwerke können jederzeit kostenlos entfernt werden.",
+                    "You can remove buildings and get the full cost refunded."))
     st.divider()
-    st.subheader(lang("Noch eine Runde?", "Play again?"))
-    if st.button(lang("🎲 Neues Spiel starten", "🎲 Start a new game"),type="primary",use_container_width=True):
-        history = game["history"][:]
-        st.session_state[KEY] = fresh_state()
-        st.session_state[KEY]["history"] = history
-        st.rerun()
+    st.markdown("**" + lang("Bau-Regeln", "Build rules") + "**")
+    st.write(lang("☀️ Solar: auf Freiflächen", "☀️ Solar: open land"))
+    st.write(lang("🌬️ Wind: auf Hügeln und Freiflächen", "🌬️ Wind: hills and open land"))
+    st.write(lang("💦 Wasser: direkt am Fluss", "💦 Hydro: river tiles"))
+    st.write(lang("🔋 Batterie / 🧪 H₂: auf Freiflächen", "🔋 Battery / 🧪 H₂: open land"))
+    st.caption(lang("🌲 Wälder und 🏙️ Stadt bleiben unbebaut.",
+                    "🌲 Forests and 🏙️ city areas cannot be built on."))
 
-with st.expander("🧠 " + lang("Wie funktioniert das Modell?", "How does the model work?")):
+with main:
+    st.subheader(lang("🌍 Deine Landkarte", "🌍 Your map"))
+    st.caption(lang("1. Anlage links auswählen   2. Feld auf der Karte anklicken   3. Simulation starten",
+                    "1. Select a building   2. Click a map tile   3. Run the simulation"))
+    with st.container(border=True):
+        for r, line in enumerate(TERRAIN):
+            columns = st.columns(len(line), gap="small")
+            for c, terrain in enumerate(line):
+                building = game["buildings"].get((r,c))
+                symbol = TECH[building]["icon"] if building else TERRAIN_ICONS[terrain]
+                tip = (lang(*TECH[building]["title"]) + " · " if building else "") + lang(*TERRAIN_NAMES[terrain])
+                with columns[c]:
+                    if st.button(symbol, key=f"map_tile_{r}_{c}", help=tip,
+                                 use_container_width=True):
+                        place(r,c)
+                        st.rerun()
+    if game["notice"]:
+        st.caption(game["notice"])
+    st.caption(lang("🌾 Freifläche    ⛰️ Hügel    🌲 Wald    🌊 Fluss    🏙️ Stadt",
+                    "🌾 Open land    ⛰️ Hills    🌲 Forest    🌊 River    🏙️ City"))
+
+st.divider()
+st.subheader(lang("⚙️ Deine Energieversorgung testen", "⚙️ Test your power supply"))
+st.write(lang(
+    "Deine Stadt benötigt **24 Stunden lang Strom**. Solar, Wind und Wasserkraft liefern je nach Wetter. "
+    "Batterien und Wasserstoff speichern Überschüsse. Wenn die Energie nicht reicht, hilft ein "
+    "fossiles Notkraftwerk aus – aber das kostet Punkte.",
+    "Your city needs **electricity for 24 hours**. Solar, wind and hydropower respond to the weather. "
+    "Batteries and hydrogen can store surplus energy. If power is still short, "
+    "a fossil-fuel backup plant helps out – but costs points.",
+))
+
+weather = st.selectbox(
+    lang("Wetterlage auswählen", "Choose a weather scenario"), list(WEATHER),
+    format_func=lambda code: lang(*WEATHER[code]), key="map_challenge_weather",
+)
+game["weather"] = weather
+if not game["buildings"]:
+    st.info(lang("Baue zuerst mindestens ein Kraftwerk auf der Karte.",
+                 "Build at least one power plant on the map first."))
+
+if st.button(lang("🚀 24 STUNDEN SIMULIEREN", "🚀 SIMULATE 24 HOURS"),
+             type="primary", use_container_width=True,
+             disabled=not any(x in {"solar","wind","hydro"} for x in game["buildings"].values())):
+    game["results"] = run_simulation(game["buildings"],weather)
+    game["runs"].append({"points":game["results"]["score"],
+                         "coverage":round(game["results"]["coverage"],1),
+                         "spent":price(),"weather":lang(*WEATHER[weather])})
+    st.rerun()
+
+if game["results"]:
+    result = game["results"]
+    st.divider()
+    points = result["score"]
+    if result["coverage"] >= 98:
+        trophy, rank = "🏆", lang("Energie-Legende", "Energy Legend")
+    elif result["coverage"] >= 85:
+        trophy, rank = "🥇", lang("Energie-Profi", "Energy Pro")
+    elif result["coverage"] >= 65:
+        trophy, rank = "🥈", lang("Stadtretter", "City Saver")
+    else:
+        trophy, rank = "🔧", lang("Nächster Versuch!", "Try Again!")
+    st.subheader(f"{trophy} {rank} · {points} / 1000 {lang('Punkte','points')}")
+    result_cols = st.columns(4)
+    result_cols[0].metric(lang("Erneuerbare Deckung", "Renewable coverage"),f"{number(result['coverage'])} %")
+    result_cols[1].metric(lang("Notstrom", "Backup power"),f"{number(result['backup'])} MWh")
+    result_cols[2].metric(lang("Ungenutzte Energie", "Unused energy"),f"{number(result['spill'])} MWh")
+    result_cols[3].metric(lang("CO₂ durch Notstrom", "Backup CO₂"),f"{number(result['co2'])} t")
+
+    chart_data = pd.DataFrame(result["rows"])
+    chart_cols = {
+        "demand":lang("Bedarf", "Demand"), "solar":lang("Solarstrom", "Solar"),
+        "wind":lang("Windstrom", "Wind"), "hydro":lang("Wasserkraft", "Hydropower"),
+        "battery":lang("Batterieabgabe", "Battery output"),
+        "hydrogen":lang("H₂-Abgabe", "H₂ output"),
+        "backup":lang("Notstrom", "Backup")}
+    st.subheader("📈 " + lang("So lief dein Tag", "How your day went"))
+    st.line_chart(chart_data.set_index("hour")[list(chart_cols)].rename(columns=chart_cols),
+                  x_label=lang("Stunde", "Hour"), y_label="MW")
+    st.caption(lang(
+        "Eine Stunde bei 1 MW entspricht 1 MWh. Die Simulation verwendet fiktive Anlagengrößen "
+        "und Wetterdaten. Der angenommene CO₂-Faktor für Notstrom beträgt 0,7 t/MWh.",
+        "One hour at 1 MW corresponds to 1 MWh. The simulation uses fictional plant "
+        "capacities and weather profiles. Backup emission factor: assumed 0.7 t/MWh.",
+    ))
+    if result["coverage"] >= 98:
+        st.balloons()
+        st.success(lang("Fast ohne fossilen Notstrom! Versuch jetzt, das Budget noch effizienter zu nutzen.",
+                        "Almost no fossil backup! Now try using your budget even more efficiently."))
+    else:
+        st.info(lang(
+            "💡 Tipp: Nachts liefert Solarstrom nichts. Versuch es mit Wind, Wasserkraft oder "
+            "Speichern. Wasserstoff hat dabei deutlich höhere Umwandlungsverluste als eine Batterie.",
+            "💡 Tip: Solar panels produce nothing at night. Try wind, hydropower or storage. "
+            "Hydrogen storage has higher conversion losses than batteries.",
+        ))
+
+    with st.expander(lang("🏅 Deine Ergebnisse in dieser Sitzung", "🏅 Your results in this session")):
+        table = pd.DataFrame(sorted(game["runs"], key=lambda x:x["points"],reverse=True))
+        st.dataframe(table, use_container_width=True, hide_index=True)
+
+with st.expander(lang("🧠 Wie funktionieren Kraftwerke und Speicher im Spiel?",
+                      "🧠 How do plants and storage work in the game?")):
     st.write(lang(
-        "**Simulation statt echte Netzdaten:** 24 Stunden mit je 1 Stunde Zeitschritt. "
-        "Solarstrom hängt von Tageszeit und Wolken ab, Windstrom vom simulierten Wind. "
-        "Zuerst wird die aktuelle erneuerbare Erzeugung genutzt. Überschüsse laden zunächst "
-        "den Batteriespeicher (90 % Lade- und 90 % Entladewirkungsgrad) und dann den "
-        "Wasserstoffspeicher (38 % vereinfachter Strom-zu-Strom-Wirkungsgrad). "
-        "Bei Strommangel werden zuerst Batterie und dann Wasserstoff entladen. "
-        "Reicht das nicht, erzeugt das Diesel-Notkraftwerk den fehlenden Strom. "
-        "Die dargestellten Kapazitäten, Kosten und Punkte sind Spielannahmen.",
-        "**Simulation, not real grid data:** 24 hourly time steps. Solar output depends on time "
-        "and cloud cover, wind output on simulated weather. Current renewable generation "
-        "is used first. Surplus charges the battery (90% charging and 90% discharge efficiency), "
-        "then the hydrogen store (simplified 38% electricity-to-electricity efficiency). "
-        "If electricity is short, the battery and then hydrogen discharge. Remaining shortages "
-        "are met by diesel backup. Capacities, prices and points are game assumptions."))
+        "**Solar:** Liefert nur tagsüber, wetterabhängig. **Wind:** Kann auch nachts erzeugen, "
+        "schwankt aber. **Wasserkraft:** Liefert im Modell relativ gleichmäßig Strom. "
+        "**Batterie:** Speichert Überschüsse, mit jeweils 90 % Lade- und Entladewirkungsgrad. "
+        "**Wasserstoff:** Aus überschüssigem Strom wird Wasserstoff erzeugt und später wieder "
+        "Strom gewonnen. Im Modell liegt der vereinfachte Strom-zu-Strom-Wirkungsgrad bei 38 %. "
+        "Beide Speicher starten leer. Die Stadt verbraucht je nach Stunde rund 3,7–6 MW. "
+        "Alle Anlagenkosten, Leistungen und Umweltwerte sind **Spielwerte**, keine reale Standortplanung.",
+        "**Solar:** Produces electricity only during daylight and depends on weather. **Wind:** "
+        "Also works at night but fluctuates. **Hydro:** Produces relatively steady power in this model. "
+        "**Battery:** Stores surplus with 90% charging and 90% discharge efficiency. "
+        "**Hydrogen:** Surplus electricity is turned into hydrogen and later back into power; "
+        "the model uses a simplified 38% electricity-to-electricity efficiency. "
+        "Both storage types start empty. City demand varies around 3.7–6 MW. "
+        "All prices, outputs and environmental figures are **game values**, not real site planning.",
+    ))
