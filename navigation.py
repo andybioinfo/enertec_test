@@ -141,9 +141,6 @@ def h2_sidebar():
         if st.button("Erklärung Wasserstoff", use_container_width=True):
             st.switch_page("pages/h12_Erklärung_Windenergie.py")
 
-        if st.button("Erklärung Wasser Modell", use_container_width=True):
-            st.switch_page("pages/h15_Erklärung_Wasser_Modell.py")
-
         if st.button("Erklärung Multimeter", use_container_width=True):
             st.switch_page("pages/h16_Einstellung_Multimeter.py")
 
