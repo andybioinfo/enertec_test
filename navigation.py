@@ -160,3 +160,10 @@ def h2_sidebar():
 
         if st.button(lang("Wasserstoff Quiz", "Hydrogen Quiz"), use_container_width=True):
             st.switch_page("pages/h12_Quiz_Wasserstoff.py")
+
+        st.divider()
+
+        if st.button("Energy Challenge Game", use_container_width=True):
+            st.switch_page("pages/energy_challenge.py")
+
+
