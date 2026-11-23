@@ -119,7 +119,7 @@ def h2_sidebar():
             st.switch_page("pages/h2_main.py")
 
         if st.button("Versuch 1", use_container_width=True):
-            st.switch_page("pages/h1_Versuch_1.py")
+            st.switch_page("pages/h2_Versuch_1.py")
 
         if st.button("Versuch 2", use_container_width=True):
             st.switch_page("pages/h2_Versuch_2.py")
