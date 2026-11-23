@@ -130,6 +130,9 @@ def h2_sidebar():
         if st.button("Versuch 4", use_container_width=True):
             st.switch_page("pages/h2_Versuch_4.py")
 
+        if st.button("Versuch 5", use_container_width=True):
+            st.switch_page("pages/h2_Versuch_5.py")
+
         st.divider()
 
         if st.button("Aufbau Versuchskoffer", use_container_width=True):
