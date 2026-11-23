@@ -139,11 +139,14 @@ def h2_sidebar():
             st.switch_page("pages/h11_aufbau_versuchskoffer.py") 
 
         if st.button("Erklärung Wasserstoff", use_container_width=True):
-            st.switch_page("pages/h12_Erklärung_Windenergie.py")
+            st.switch_page("pages/h12_Erklärung_Wasserstoff.py")
 
         if st.button("Erklärung Multimeter", use_container_width=True):
             st.switch_page("pages/h16_Einstellung_Multimeter.py")
 
         if st.button("Sammlung Videos", use_container_width=True):
             st.switch_page("pages/h17_Sammlung_Videos.py")
+
+        if st.button("Wasserstoff Quiz", use_container_width=True):
+            st.switch_page("pages/h12_Quiz_Wasserstoff.py")
 
