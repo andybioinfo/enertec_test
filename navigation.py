@@ -136,7 +136,7 @@ def h2_sidebar():
         st.divider()
 
         if st.button("Aufbau Versuchskoffer", use_container_width=True):
-            st.switch_page("pages/h11_Aufbau_Versuchskoffer.py")
+            st.switch_page("pages/h11_aufbau_versuchskoffer.py") 
 
         if st.button("Erklärung Wasserstoff", use_container_width=True):
             st.switch_page("pages/h12_Erklärung_Windenergie.py")
