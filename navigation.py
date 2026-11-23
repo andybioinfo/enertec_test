@@ -108,7 +108,7 @@ def wind_sidebar():
 
 def h2_sidebar():
     with st.sidebar:
-        st.title("Wasserstoff-Experiment [TO DO]")
+        st.title("Wasserstoff-Experiment")
 
         if st.button("← Zurück zur Startseite", use_container_width=True):
             st.switch_page("Startseite.py")
@@ -125,10 +125,10 @@ def h2_sidebar():
             st.switch_page("pages/h2_Versuch_2.py")
 
         if st.button("Versuch 3", use_container_width=True):
-            st.switch_page("pages/h3_Versuch_3.py")
+            st.switch_page("pages/h2_Versuch_3.py")
 
         if st.button("Versuch 4", use_container_width=True):
-            st.switch_page("pages/h4_Versuch_4.py")
+            st.switch_page("pages/h2_Versuch_4.py")
 
         st.divider()
 
