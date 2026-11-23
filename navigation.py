@@ -150,7 +150,7 @@ def h2_sidebar():
             st.switch_page("pages/h12_Erklärung_Wasserstoff.py")
 
         if st.button(lang("Simulatoren & Rechner", "Simulators & Calculators"),use_container_width=True):
-            st.switch_page("pages/h2_simulatorr.py")
+            st.switch_page("pages/h2_simulator.py")
 
         if st.button(lang("Erklärung Multimeter", "Multimeter Explained"), use_container_width=True):
             st.switch_page("pages/h16_Einstellung_multimeter.py")
